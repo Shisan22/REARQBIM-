@@ -1,0 +1,150 @@
+# ==============================================================================
+# REARQ BIM - GitLab CI/CD Pipeline
+# Multi-stage CI/CD for .NET 8 Web API & Vue 3 Frontend
+# ==============================================================================
+
+stages:
+  - lint_and_test
+  - build_artifacts
+  - security_scan
+  - docker_package
+  - deploy_staging
+  - deploy_production
+
+variables:
+  DOTNET_VERSION: "8.0"
+  NODE_VERSION: "20.x"
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: ""
+  CONTAINER_BACKEND_IMAGE: $CI_REGISTRY_IMAGE/backend:$CI_COMMIT_SHORT_SHA
+  CONTAINER_FRONTEND_IMAGE: $CI_REGISTRY_IMAGE/frontend:$CI_COMMIT_SHORT_SHA
+
+# ------------------------------------------------------------------------------
+# 1. Tests & Linters
+# ------------------------------------------------------------------------------
+backend:unit_tests:
+  stage: lint_and_test
+  image: mcr.microsoft.com/dotnet/sdk:8.0
+  script:
+    - echo "Ejecutando pruebas unitarias de Backend C# .NET 8..."
+    - dotnet restore backend/RearqBim.sln
+    - dotnet test backend/RearqBim.sln --configuration Release --collect:"XPlat Code Coverage"
+  artifacts:
+    when: always
+    reports:
+      junit: "**/TestResults/*.xml"
+    paths:
+      - "**/TestResults/"
+  only:
+    - merge_requests
+    - main
+    - develop
+
+frontend:lint_and_test:
+  stage: lint_and_test
+  image: node:20-alpine
+  before_script:
+    - cd frontend
+    - npm ci
+  script:
+    - echo "Ejecutando linter y tests del Frontend Vue 3..."
+    - npm run lint --if-present
+    - npm run test:unit --if-present
+  only:
+    - merge_requests
+    - main
+    - develop
+
+# ------------------------------------------------------------------------------
+# 2. Build de Artefactos
+# ------------------------------------------------------------------------------
+backend:build_release:
+  stage: build_artifacts
+  image: mcr.microsoft.com/dotnet/sdk:8.0
+  script:
+    - dotnet publish backend/RearqBim.Api/RearqBim.Api.csproj -c Release -o ./publish/backend
+  artifacts:
+    paths:
+      - ./publish/backend
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+
+frontend:build_spa:
+  stage: build_artifacts
+  image: node:20-alpine
+  before_script:
+    - cd frontend
+    - npm ci
+  script:
+    - npm run build
+  artifacts:
+    paths:
+      - frontend/dist
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+
+# ------------------------------------------------------------------------------
+# 3. Empaquetado Docker y Registro de Contenedores
+# ------------------------------------------------------------------------------
+docker:build_backend:
+  stage: docker_package
+  image: docker:24.0.5
+  services:
+    - docker:24.0.5-dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - docker build -t $CONTAINER_BACKEND_IMAGE -f backend/Dockerfile .
+    - docker tag $CONTAINER_BACKEND_IMAGE $CI_REGISTRY_IMAGE/backend:latest
+    - docker push $CONTAINER_BACKEND_IMAGE
+    - docker push $CI_REGISTRY_IMAGE/backend:latest
+  only:
+    - main
+    - develop
+
+docker:build_frontend:
+  stage: docker_package
+  image: docker:24.0.5
+  services:
+    - docker:24.0.5-dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - docker build -t $CONTAINER_FRONTEND_IMAGE -f frontend/Dockerfile .
+    - docker tag $CONTAINER_FRONTEND_IMAGE $CI_REGISTRY_IMAGE/frontend:latest
+    - docker push $CONTAINER_FRONTEND_IMAGE
+    - docker push $CI_REGISTRY_IMAGE/frontend:latest
+  only:
+    - main
+    - develop
+
+# ------------------------------------------------------------------------------
+# 4. Despliegue Automatizado
+# ------------------------------------------------------------------------------
+deploy:staging:
+  stage: deploy_staging
+  image: alpine:latest
+  environment:
+    name: staging
+    url: https://staging.rearqbim.com
+  script:
+    - echo "Desplegando en ambiente de pruebas (Staging) de REARQ BIM..."
+    - # Scripts de despliegue mediante kubectl / helm o SSH runner
+  only:
+    - develop
+
+deploy:production:
+  stage: deploy_production
+  image: alpine:latest
+  environment:
+    name: production
+    url: https://app.rearqbim.com
+  script:
+    - echo "Desplegando versión de producción de REARQ BIM..."
+  when: manual
+  only:
+    - main
