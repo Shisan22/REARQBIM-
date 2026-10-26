@@ -165,7 +165,6 @@ La aplicación estará disponible en `http://localhost:5173`.
 - Tomás Ramírez
 - Samuel Zuleta
 - Esteban Quiceno Loaiza
-- Juan Pablo González Zabala
 
 ---
 
